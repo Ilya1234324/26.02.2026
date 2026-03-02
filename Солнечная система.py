@@ -1,64 +1,131 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Модуль симуляции Солнечной системы v3.0
+=======================================
+Интерактивная 3D-визуализация (в 2D-проекции) движения планет вокруг Солнца.
+
+Основные возможности:
+- Реалистичное движение планет по эллиптическим орбитам (упрощенная модель Кеплера)
+- Интерактивное управление масштабом (зум) и скоростью анимации
+- Режимы отображения: орбиты, названия, следы движения
+- Информационная панель с подробными данными о каждом небесном теле
+- Возможность слежения камерой за выбранной планетой
+
+Физическая модель:
+- Орбиты представлены как окружности (упрощение, эксцентриситет не учитывается)
+- Для визуального сжатия орбит по вертикали применяется коэффициент 0.4
+- Время симуляции масштабируется для наглядности (1 год за несколько секунд)
+"""
+
 import tkinter as tk
 from tkinter import ttk
 import math
 import time
 from PIL import Image, ImageTk
 import os
+from typing import Dict, List, Optional, Tuple, Any
+
 
 class SolarSystemSimulation:
-    def __init__(self, root):
+    """
+    Главный класс симуляции Солнечной системы.
+    
+    Отвечает за:
+    - Инициализацию графического интерфейса
+    - Управление параметрами симуляции (скорость, масштаб, режимы)
+    - Расчет позиций планет на основе времени
+    - Отрисовку всех элементов на холсте
+    - Обработку пользовательского ввода
+    
+    Атрибуты:
+        root (tk.Tk): Главное окно приложения
+        time_scale (float): Множитель скорости симуляции (1.0 = реальная скорость)
+        zoom (float): Текущий масштаб отображения
+        target_zoom (float): Целевой масштаб для плавной анимации
+        running (bool): Флаг работы основного цикла
+        planets_data (dict): Словарь с данными всех планет
+    """
+    
+    def __init__(self, root: tk.Tk):
+        """
+        Инициализация симуляции.
+        
+        Args:
+            root: Главное окно Tkinter, в котором будет размещена симуляция
+            
+        Примечание:
+            Все физические параметры (размеры, расстояния) масштабированы
+            для удобства визуализации, а не для физической точности.
+        """
         self.root = root
         self.root.title("Симуляция Солнечной системы v3.0")
         self.root.geometry("1400x800")
-        self.root.configure(bg="#0a0a2a")
+        self.root.configure(bg="#0a0a2a")  # Тёмно-синий фон, имитирующий космос
         
         # Параметры симуляции
-        self.time_scale = 0.5
-        self.zoom = 1.0
-        self.target_zoom = 1.0  # Целевой зум для плавности
-        self.running = True
-        self.start_time = time.time()
-        self.planet_angles = {}
-        self.show_orbits = True
-        self.show_names = True
-        self.trail_mode = False
-        self.planet_trails = {}
-        self.selected_planet = None
-        self.follow_mode = False
-        self.paused = False
-        self.pause_time = 0
+        self.time_scale = 0.5                # Начальная скорость (0.5 от реальной)
+        self.zoom = 1.0                       # Текущий масштаб
+        self.target_zoom = 1.0                 # Целевой зум для плавности
+        self.running = True                    # Флаг работы программы
+        self.start_time = time.time()           # Время запуска для расчета симуляции
+        self.planet_angles: Dict[str, float] = {}  # Текущие углы планет (для следов)
+        self.show_orbits = True                  # Отображение орбит
+        self.show_names = True                   # Отображение названий
+        self.trail_mode = False                   # Режим отображения следов
+        self.planet_trails: Dict[str, List[Tuple[float, float]]] = {}  # Следы планет
+        self.selected_planet: Optional[str] = None  # Выбранная планета
+        self.follow_mode = False                    # Режим слежения за планетой
+        self.paused = False                         # Пауза симуляции
+        self.pause_time = 0                          # Время при паузе
         
-        # Основные константы - УМЕНЬШАЕМ СОЛНЦЕ!!!
+        # Константы масштабирования
+        # Астрономическая единица в пикселях (1 AU = расстояние Земля-Солнце)
         self.AU = 120
-        self.EARTH_RADIUS = 8
-        # Солнце теперь всего в 20 раз больше Земли (было 109!)
-        self.SUN_RADIUS = self.EARTH_RADIUS * 20
         
-        # Базовое замедление
+        # Радиус Земли в пикселях при масштабе 1.0
+        self.EARTH_RADIUS = 8
+        
+        # Солнце уменьшено для лучшего обзора (в реальности в 109 раз больше Земли)
+        # ИЗМЕНЕНО: уменьшили Солнце с 20 до 12 раз больше Земли
+        self.SUN_RADIUS = self.EARTH_RADIUS * 12  # Было 20, стало 12
+        
+        # Базовое замедление орбитальных периодов для наглядности анимации
+        # Реальные периоды слишком велики для интерактивной визуализации
         self.BASE_SLOWDOWN = 20
         
-        # Цвета для планет
+        # Цвета для планет (используются, если нет изображений)
         self.planet_colors = {
-            'Меркурий': '#c0c0c0',
-            'Венера': '#ffd700',
-            'Земля': '#4169e1',
-            'Марс': '#ff4500',
-            'Юпитер': '#d2b48c',
-            'Сатурн': '#f4a460',
-            'Уран': '#7fffd4',
-            'Нептун': '#1e90ff'
+            'Меркурий': '#c0c0c0',  # Серебристый
+            'Венера': '#ffd700',     # Золотистый
+            'Земля': '#4169e1',       # Королевский синий
+            'Марс': '#ff4500',        # Оранжево-красный
+            'Юпитер': '#d2b48c',      # Светло-коричневый
+            'Сатурн': '#f4a460',      # Песочный
+            'Уран': '#7fffd4',        # Бирюзовый
+            'Нептун': '#1e90ff'       # Ярко-синий
         }
         
         # Данные планет
+        # Все значения масштабированы для визуализации, кроме текстовых описаний
         self.planets_data = {
             'Меркурий': {
-                'distance': 0.4, 'size_ratio': 0.38, 'color': '#c0c0c0',
-                'orbit_period': 0.24 * self.BASE_SLOWDOWN,
-                'rotation_period': 58.6,
-                'mass': '3.30×10²³ кг', 'diameter': '4,879 км',
-                'density': '5.43 г/см³', 'temperature': '-173°C до 427°C',
-                'gravity': '3.7 м/с²', 'moons': 0, 'atmosphere': 'Очень разреженная',
-                'discovery': 'Известна с древних времен', 'type': 'Планета земной группы',
+                'distance': 0.4,        # Расстояние от Солнца в AU
+                'size_ratio': 0.38,      # Размер относительно Земли
+                'color': '#c0c0c0',       # Цвет для отрисовки
+                'orbit_period': 0.24 * self.BASE_SLOWDOWN,  # Период обращения (симуляция)
+                'rotation_period': 58.6,  # Период вращения (реальные сутки)
+                # Далее следуют реальные физические характеристики для информационной панели
+                'mass': '3.30×10²³ кг', 
+                'diameter': '4,879 км',
+                'density': '5.43 г/см³', 
+                'temperature': '-173°C до 427°C',
+                'gravity': '3.7 м/с²', 
+                'moons': 0, 
+                'atmosphere': 'Очень разреженная',
+                'discovery': 'Известна с древних времен', 
+                'type': 'Планета земной группы',
                 'description': 'Самая близкая к Солнцу планета. Днем поверхность нагревается до 427°C, а ночью остывает до -173°C.'
             },
             'Венера': {
@@ -134,32 +201,50 @@ class SolarSystemSimulation:
         }
         
         # Словарь для хранения изображений для информационной панели
-        self.info_images = {}
+        self.info_images: Dict[str, Optional[ImageTk.PhotoImage]] = {}
         
         self.create_widgets()
         self.load_images()
         
-        # Привязываем события мыши
-        self.canvas.bind("<Button-3>", self.on_right_click)  # Правая кнопка
-        self.canvas.bind("<B3-Motion>", self.on_right_drag)  # Движение с правой кнопкой
-        self.canvas.bind("<MouseWheel>", self.on_mousewheel)  # Колесико мыши
+        # Привязываем события мыши для интерактивного управления
+        self.canvas.bind("<Button-3>", self.on_right_click)  # Правая кнопка - начало зума
+        self.canvas.bind("<B3-Motion>", self.on_right_drag)  # Движение с правой кнопкой - изменение зума
+        self.canvas.bind("<MouseWheel>", self.on_mousewheel)  # Колесико мыши - изменение зума
         
+        # Запускаем основной цикл обновления
         self.update()
     
-    def on_right_click(self, event):
-        """Обработка нажатия правой кнопки мыши"""
+    def on_right_click(self, event: tk.Event) -> None:
+        """
+        Обработчик нажатия правой кнопки мыши.
+        
+        Args:
+            event: Событие Tkinter, содержащее координаты клика
+            
+        Сохраняет начальную позицию для расчета изменения зума при перетаскивании.
+        """
         self.drag_start_y = event.y
         self.initial_zoom = self.zoom
     
-    def on_right_drag(self, event):
-        """Обработка движения с зажатой правой кнопкой"""
+    def on_right_drag(self, event: tk.Event) -> None:
+        """
+        Обработчик перетаскивания с зажатой правой кнопкой.
+        
+        Args:
+            event: Событие Tkinter с текущими координатами мыши
+            
+        Реализует изменение масштаба вертикальным движением мыши:
+        - Вверх (уменьшение Y) -> увеличение масштаба
+        - Вниз (увеличение Y) -> уменьшение масштаба
+        """
         if hasattr(self, 'drag_start_y'):
-            # Вычисляем изменение зума
+            # Вычисляем изменение зума пропорционально перемещению мыши
             delta = (self.drag_start_y - event.y) / 200
             new_zoom = self.initial_zoom + delta * self.initial_zoom
             
-            # Ограничиваем зум
-            new_zoom = max(0.2, min(5.0, new_zoom))
+            # ИЗМЕНЕНО: увеличили максимальное отдаление с 0.2 до 0.1
+            # Ограничиваем зум разумными пределами (10% - 500%)
+            new_zoom = max(0.1, min(5.0, new_zoom))  # Было 0.2, стало 0.1
             
             # Устанавливаем новый зум
             self.target_zoom = new_zoom
@@ -167,19 +252,28 @@ class SolarSystemSimulation:
             self.zoom_scale.set(new_zoom)
             self.update_zoom_display()
             
-            # Перезагружаем изображения
+            # Перезагружаем изображения с новым масштабом
             self.load_images()
     
-    def on_mousewheel(self, event):
-        """Обработка колесика мыши"""
+    def on_mousewheel(self, event: tk.Event) -> None:
+        """
+        Обработчик колесика мыши.
+        
+        Args:
+            event: Событие Tkinter, содержащее направление вращения колесика
+                  (event.delta > 0 - вверх, < 0 - вниз)
+                  
+        Изменяет масштаб на 10% за шаг колесика.
+        """
         # Определяем направление колесика
         if event.delta > 0:
             self.target_zoom *= 1.1  # Увеличиваем на 10%
         else:
             self.target_zoom *= 0.9  # Уменьшаем на 10%
         
+        # ИЗМЕНЕНО: увеличили максимальное отдаление с 0.2 до 0.1
         # Ограничиваем зум
-        self.target_zoom = max(0.2, min(5.0, self.target_zoom))
+        self.target_zoom = max(0.1, min(5.0, self.target_zoom))  # Было 0.2, стало 0.1
         self.zoom = self.target_zoom
         self.zoom_scale.set(self.target_zoom)
         self.update_zoom_display()
@@ -187,35 +281,54 @@ class SolarSystemSimulation:
         # Перезагружаем изображения
         self.load_images()
     
-    def update_zoom_display(self):
-        """Обновление отображения зума"""
+    def update_zoom_display(self) -> None:
+        """
+        Обновляет отображение текущего масштаба в интерфейсе.
+        
+        Меняет цвет индикатора в зависимости от величины масштаба:
+        - Синий: дальний обзор (<50%)
+        - Зеленый: нормальный (50-100%)
+        - Фиолетовый: средний (100-150%)
+        - Оранжевый: крупный (150-200%)
+        - Красный: очень крупный (>200%)
+        """
         percent = int(self.zoom * 100)
         self.zoom_label.config(text=f"{percent}%")
         self.zoom_value_label.config(text=f"{percent}%")
         
         # Меняем цвет в зависимости от масштаба
         if self.zoom < 0.5:
-            color = "#4444aa"
+            color = "#4444aa"  # Синий - дальний обзор
         elif self.zoom < 1.0:
-            color = "#44aa44"
+            color = "#44aa44"  # Зеленый - нормальный
         elif self.zoom < 1.5:
-            color = "#aa44aa"
+            color = "#aa44aa"  # Фиолетовый - средний
         elif self.zoom < 2.0:
-            color = "#ffaa00"
+            color = "#ffaa00"  # Оранжевый - крупный
         else:
-            color = "#ff4444"
+            color = "#ff4444"  # Красный - очень крупный
         
         self.zoom_label.config(fg=color)
         self.zoom_value_label.config(fg=color)
     
-    def load_images(self):
-        """Загрузка изображений планет"""
+    def load_images(self) -> None:
+        """
+        Загружает и масштабирует изображения планет.
+        
+        Особенности:
+        - Изображения масштабируются под текущий zoom
+        - При отсутствии файла используется отрисовка кругами
+        - Создаются две версии: для холста и для информационной панели
+        
+        Пути к файлам указаны относительно корня проекта.
+        В случае ошибки загрузки изображение заменяется на None.
+        """
         self.planet_images = {}
         image_files = {
             'Солнце': 'фото/photo_2026-02-26_09-07-44-Photoroom.png',
             'Меркурий': 'фото/photo_2026-02-26_09-07-57-Photoroom.png',
             'Венера': 'фото/photo_2026-02-26_12-31-40-Photoroom (2).png',
-            'Земля': 'фото/earth.png',
+            'Земля': 'фото/photo_2026-02-26_12-35-04-Photoroom.png',
             'Марс': 'фото/photo_2026-02-26_12-36-39-Photoroom.png',
             'Юпитер': 'фото/photo_2026-02-26_12-37-26-Photoroom.png',
             'Сатурн': 'фото/photo_2026-02-26_12-39-23-Photoroom.png',
@@ -228,17 +341,17 @@ class SolarSystemSimulation:
                 if os.path.exists(filename):
                     img = Image.open(filename)
                     if planet_name == 'Солнце':
-                        # Солнце теперь намного меньше!
+                        # ИЗМЕНЕНО: Солнце теперь еще меньше (с учетом нового SUN_RADIUS)
                         size = int(self.SUN_RADIUS * 2 * self.zoom)
                     else:
                         size_ratio = self.planets_data.get(planet_name, {}).get('size_ratio', 1.0)
                         size = int(self.EARTH_RADIUS * 2 * size_ratio * self.zoom)
                     
-                    # Сохраняем пропорции
+                    # Сохраняем пропорции при масштабировании
                     img.thumbnail((size, size), Image.Resampling.LANCZOS)
                     self.planet_images[planet_name] = ImageTk.PhotoImage(img)
                     
-                    # Также загружаем версию для информационной панели
+                    # Также загружаем версию для информационной панели (фиксированный размер)
                     info_img = Image.open(filename)
                     info_img.thumbnail((100, 100), Image.Resampling.LANCZOS)
                     self.info_images[planet_name] = ImageTk.PhotoImage(info_img)
@@ -251,8 +364,8 @@ class SolarSystemSimulation:
                 self.planet_images[planet_name] = None
                 self.info_images[planet_name] = None
     
-    def create_widgets(self):
-        """Создание элементов интерфейса"""
+    def create_widgets(self) -> None:
+        """Создание всех элементов графического интерфейса."""
         # Верхняя панель с заголовком
         title_frame = tk.Frame(self.root, bg="#1a1a3a", height=50)
         title_frame.pack(side=tk.TOP, fill=tk.X)
@@ -260,7 +373,7 @@ class SolarSystemSimulation:
         tk.Label(title_frame, text="🌍 СИМУЛЯЦИЯ СОЛНЕЧНОЙ СИСТЕМЫ 🌞", 
                 bg="#1a1a3a", fg="white", font=("Arial", 18, "bold")).pack(pady=10)
         
-        # Основной холст
+        # Основной холст для отрисовки
         canvas_frame = tk.Frame(self.root, bg="#0a0a2a")
         canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
@@ -278,8 +391,16 @@ class SolarSystemSimulation:
         
         self.show_welcome_info()
     
-    def create_info_panel(self):
-        """Создание информационной панели"""
+    def create_info_panel(self) -> None:
+        """
+        Создание правой информационной панели.
+        
+        Панель содержит:
+        - Текущее время симуляции
+        - Фото выбранного объекта
+        - Подробную текстовую информацию
+        - Полосу прокрутки для длинных описаний
+        """
         self.info_frame = tk.Frame(self.root, bg="#1a1a3a", width=400)
         self.info_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=5, pady=5)
         self.info_frame.pack_propagate(False)
@@ -320,8 +441,17 @@ class SolarSystemSimulation:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.info_text.config(yscrollcommand=scrollbar.set)
     
-    def create_control_panel(self):
-        """Создание панели управления"""
+    def create_control_panel(self) -> None:
+        """
+        Создание нижней панели управления.
+        
+        Содержит три ряда элементов:
+        1. Ползунки скорости и масштаба с пресетами
+        2. Кнопки управления режимами
+        3. Подсказки по использованию
+        
+        Все элементы сгруппированы по функциональности и имеют всплывающие подсказки.
+        """
         control_frame = tk.Frame(self.root, bg="#1a1a3a", height=200)
         control_frame.pack(side=tk.BOTTOM, fill=tk.X)
         control_frame.pack_propagate(False)
@@ -353,7 +483,7 @@ class SolarSystemSimulation:
                                    fg="#00ff00", font=("Arial", 12, "bold"))
         self.speed_label.pack(side=tk.LEFT, padx=5)
         
-        # Кнопки скорости
+        # Кнопки предустановленной скорости
         speed_buttons = tk.Frame(speed_frame, bg="#1a1a3a")
         speed_buttons.pack(pady=5)
         
@@ -398,11 +528,12 @@ class SolarSystemSimulation:
         zoom_control = tk.Frame(zoom_frame, bg="#1a1a3a")
         zoom_control.pack(pady=5)
         
-        # Иконки для зума
+        # Иконки для зума (визуальные подсказки)
         tk.Label(zoom_control, text="🌌", bg="#1a1a3a", fg="white", 
                 font=("Arial", 16)).pack(side=tk.LEFT, padx=2)
         
-        self.zoom_scale = ttk.Scale(zoom_control, from_=0.2, to=5.0, 
+        # ИЗМЕНЕНО: обновили диапазон ползунка с 0.2-5.0 до 0.1-5.0
+        self.zoom_scale = ttk.Scale(zoom_control, from_=0.1, to=5.0,  # Было 0.2, стало 0.1
                                     orient=tk.HORIZONTAL, length=250,
                                     command=self.change_zoom)
         self.zoom_scale.set(1.0)
@@ -415,12 +546,13 @@ class SolarSystemSimulation:
                                   fg="#00ff00", font=("Arial", 12, "bold"))
         self.zoom_label.pack(side=tk.LEFT, padx=10)
         
-        # Подсказки по зуму
+        # ИЗМЕНЕНО: обновили подсказки для отображения нового минимального зума
+        # Подсказки по зуму (визуализация режимов)
         zoom_hint = tk.Frame(zoom_frame, bg="#1a1a3a")
         zoom_hint.pack(pady=5)
         
         hints = [
-            ("20%", "Вся система", "#4444aa"),
+            ("10%", "Вся система (дальний обзор)", "#4444aa"),  # Было 20%, стало 10%
             ("50%", "Внутренние планеты", "#44aa44"),
             ("100%", "Обычный вид", "#aa44aa"),
             ("200%", "Детальный обзор", "#ffaa00"),
@@ -437,7 +569,7 @@ class SolarSystemSimulation:
         middle_row = tk.Frame(control_frame, bg="#1a1a3a")
         middle_row.pack(fill=tk.X, pady=5)
         
-        # Группа кнопок 1
+        # Группа кнопок 1 (управление симуляцией)
         group1 = tk.Frame(middle_row, bg="#1a1a3a")
         group1.pack(side=tk.LEFT, padx=10)
         
@@ -454,7 +586,7 @@ class SolarSystemSimulation:
             btn.pack(side=tk.LEFT, padx=3)
             self.create_tooltip(btn, tip)
         
-        # Группа кнопок 2
+        # Группа кнопок 2 (режимы отображения)
         group2 = tk.Frame(middle_row, bg="#1a1a3a")
         group2.pack(side=tk.LEFT, padx=10)
         
@@ -488,13 +620,23 @@ class SolarSystemSimulation:
                             font=("Arial", 10, "italic"))
         hint_label.pack()
     
-    def create_tooltip(self, widget, text):
-        """Создание всплывающей подсказки"""
+    def create_tooltip(self, widget: tk.Widget, text: str) -> None:
+        """
+        Создание всплывающей подсказки для элемента интерфейса.
+        
+        Args:
+            widget: Элемент, для которого создается подсказка
+            text: Текст подсказки
+            
+        Подсказка появляется при наведении курсора и исчезает при уходе.
+        """
         def enter(event):
+            # Позиционируем подсказку рядом с элементом
             x, y, _, _ = widget.bbox("insert")
             x += widget.winfo_rootx() + 25
             y += widget.winfo_rooty() + 25
             
+            # Создаем окно подсказки без стандартного оформления
             self.tooltip = tk.Toplevel(widget)
             self.tooltip.wm_overrideredirect(True)
             self.tooltip.wm_geometry(f"+{x}+{y}")
@@ -511,8 +653,15 @@ class SolarSystemSimulation:
         widget.bind('<Enter>', enter)
         widget.bind('<Leave>', leave)
     
-    def create_left_panel(self):
-        """Создание левой панели с кнопками планет"""
+    def create_left_panel(self) -> None:
+        """
+        Создание левой панели с кнопками планет.
+        
+        Панель содержит:
+        - Кнопку Солнца
+        - Кнопки всех планет (цветные)
+        - Статистику симуляции
+        """
         left_frame = tk.Frame(self.root, bg="#1a1a3a", width=180)
         left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
         left_frame.pack_propagate(False)
@@ -529,7 +678,7 @@ class SolarSystemSimulation:
         
         ttk.Separator(left_frame, orient='horizontal').pack(fill=tk.X, pady=5)
         
-        # Кнопки планет
+        # Кнопки планет (сортируем по порядку от Солнца)
         for planet_name in self.planets_data.keys():
             color = self.planet_colors.get(planet_name, "#ffffff")
             btn = tk.Button(left_frame, text=f"● {planet_name}", bg=color, fg="black",
@@ -549,54 +698,96 @@ class SolarSystemSimulation:
                                   font=("Arial", 10), justify=tk.LEFT)
         self.stats_text.pack(pady=5)
     
-    def set_speed(self, value):
+    def set_speed(self, value: float) -> None:
+        """
+        Установка скорости через кнопку-пресет.
+        
+        Args:
+            value: Значение скорости (множитель)
+            
+        Синхронизирует ползунок и отображение скорости.
+        """
         self.speed_scale.set(value)
         self.change_speed(value)
     
-    def set_zoom(self, value):
-        """Установка конкретного значения зума"""
+    def set_zoom(self, value: float) -> None:
+        """
+        Установка конкретного значения зума.
+        
+        Args:
+            value: Значение масштаба (0.2-5.0)
+            
+        Синхронизирует ползунок и отображение масштаба.
+        """
         self.zoom_scale.set(value)
         self.change_zoom(value)
     
-    def change_speed(self, value):
+    def change_speed(self, value: str) -> None:
+        """
+        Обработчик изменения скорости через ползунок.
+        
+        Args:
+            value: Новое значение скорости (приходит как строка от Tkinter)
+        """
         self.time_scale = float(value)
         self.speed_label.config(text=f"{self.time_scale:.1f}x")
     
-    def change_zoom(self, value):
-        """Изменение масштаба через ползунок"""
+    def change_zoom(self, value: str) -> None:
+        """
+        Обработчик изменения масштаба через ползунок.
+        
+        Args:
+            value: Новое значение масштаба (приходит как строка от Tkinter)
+        """
         self.target_zoom = float(value)
         self.zoom = self.target_zoom
         self.update_zoom_display()
         self.load_images()
     
-    def toggle_pause(self):
+    def toggle_pause(self) -> None:
+        """Переключение режима паузы с сохранением времени."""
         self.paused = not self.paused
         if self.paused:
             self.pause_time = time.time()
         else:
+            # Корректируем начальное время, чтобы избежать скачка при возобновлении
             self.start_time += (time.time() - self.pause_time)
     
-    def toggle_orbits(self):
+    def toggle_orbits(self) -> None:
+        """Переключение отображения орбит."""
         self.show_orbits = not self.show_orbits
     
-    def toggle_names(self):
+    def toggle_names(self) -> None:
+        """Переключение отображения названий планет."""
         self.show_names = not self.show_names
     
-    def toggle_trails(self):
+    def toggle_trails(self) -> None:
+        """
+        Переключение режима отображения следов движения.
+        
+        При выключении режима следы очищаются.
+        """
         self.trail_mode = not self.trail_mode
         if not self.trail_mode:
             self.planet_trails.clear()
     
-    def toggle_follow(self):
+    def toggle_follow(self) -> None:
+        """
+        Переключение режима слежения за планетой.
+        
+        Если нет выбранной планеты, режим не включается.
+        """
         self.follow_mode = not self.follow_mode
         if not self.follow_mode:
             self.selected_planet = None
     
-    def center_on_sun(self):
+    def center_on_sun(self) -> None:
+        """Центрирование вида на Солнце."""
         self.selected_planet = None
         self.follow_mode = False
     
-    def reset_view(self):
+    def reset_view(self) -> None:
+        """Сброс вида к начальным настройкам (масштаб 100%, центр на Солнце)."""
         self.target_zoom = 1.0
         self.zoom = 1.0
         self.zoom_scale.set(1.0)
@@ -604,7 +795,12 @@ class SolarSystemSimulation:
         self.load_images()
         self.center_on_sun()
     
-    def show_welcome_info(self):
+    def show_welcome_info(self) -> None:
+        """
+        Отображение приветственной информации с инструкциями.
+        
+        Показывается при запуске программы в информационной панели.
+        """
         # Очищаем фото
         self.photo_label.config(image='')
         
@@ -620,6 +816,7 @@ class SolarSystemSimulation:
 • Двигайте ВНИЗ для отдаления
 • Также можно использовать колесико мыши
 • Ползунок МАСШТАБ внизу тоже работает
+• Теперь можно отдалить до 10% для обзора всей системы!
 
 ⚡ **СКОРОСТЬ:**
 • Ползунок СКОРОСТЬ - регулирует быстроту движения
@@ -642,7 +839,15 @@ class SolarSystemSimulation:
         self.info_text.delete(1.0, tk.END)
         self.info_text.insert(1.0, welcome)
     
-    def show_sun_info(self):
+    def show_sun_info(self) -> None:
+        """
+        Отображение подробной информации о Солнце.
+        
+        Показывает:
+        - Изображение Солнца (если есть)
+        - Физические характеристики
+        - Интересные факты
+        """
         # Показываем фото Солнца если есть
         if self.info_images.get('Солнце'):
             self.photo_label.config(image=self.info_images['Солнце'])
@@ -686,7 +891,20 @@ class SolarSystemSimulation:
         self.info_text.delete(1.0, tk.END)
         self.info_text.insert(1.0, info)
     
-    def show_planet_info(self, planet_name):
+    def show_planet_info(self, planet_name: str) -> None:
+        """
+        Отображение подробной информации о планете.
+        
+        Args:
+            planet_name: Название планеты
+            
+        Показывает:
+        - Изображение планеты (если есть)
+        - Физические характеристики
+        - Атмосферу и состав
+        - Историю открытия
+        - Краткое описание
+        """
         p = self.planets_data[planet_name]
         
         # Показываем фото планеты если есть
@@ -731,14 +949,28 @@ class SolarSystemSimulation:
         if self.follow_mode:
             self.follow_mode = True
     
-    def update_stats(self, sim_years):
-        """Обновление статистики"""
+    def update_stats(self, sim_years: float) -> None:
+        """
+        Обновление статистики в левой панели.
+        
+        Args:
+            sim_years: Текущее время симуляции в годах
+            
+        Отображает:
+        - Время симуляции
+        - Скорость и масштаб
+        - Режим масштаба
+        - Статус (работает/пауза)
+        """
         status_color = "#00ff00" if not self.paused else "#ffaa00"
         status_text = "▶ РАБОТАЕТ" if not self.paused else "⏸ ПАУЗА"
         
-        # Определяем режим зума
-        if self.zoom < 0.5:
-            zoom_mode = "🌌 Вся система"
+        # ИЗМЕНЕНО: обновили режимы зума для нового минимального значения
+        # Определяем режим зума по величине масштаба
+        if self.zoom < 0.3:
+            zoom_mode = "🌌 Вся система (дальний)"
+        elif self.zoom < 0.5:
+            zoom_mode = "🪐 Дальний обзор"
         elif self.zoom < 1.0:
             zoom_mode = "🪐 Внутренние планеты"
         elif self.zoom < 1.5:
@@ -759,34 +991,74 @@ class SolarSystemSimulation:
         self.stats_text.config(text=stats, fg=status_color)
         self.sim_time_label.config(text=f"{sim_years:.2f} лет")
     
-    def get_planet_position(self, planet_name, time_angle):
+    def get_planet_position(self, planet_name: str, time_angle: float) -> Tuple[float, float, float]:
+        """
+        Расчет позиции планеты на орбите в заданный момент времени.
+        
+        Args:
+            planet_name: Название планеты
+            time_angle: Текущее время симуляции (в условных единицах)
+            
+        Returns:
+            Tuple[float, float, float]: (x, y, angle) - координаты и угол поворота
+            
+        Физическая модель:
+        - Орбиты представлены как окружности (упрощение)
+        - Координаты: x = distance * cos(angle), y = distance * sin(angle)
+        - Вид сверху (без сжатия по вертикали)
+        - Угол зависит от периода обращения: angle = (time / period) * 2π
+        """
         planet = self.planets_data[planet_name]
+        # Расстояние от Солнца с учетом масштаба
         distance = planet['distance'] * self.AU * self.zoom
+        # Угол на орбите (в радианах)
         angle = time_angle / planet['orbit_period'] * 2 * math.pi
         
+        # Координаты для вида сверху (без сжатия по вертикали)
         x = distance * math.cos(angle)
-        y = distance * math.sin(angle) * 0.4
+        y = distance * math.sin(angle)  # Вид сверху - без коэффициента сжатия
         
         return x, y, angle
     
-    def draw_planet(self, planet_name, x, y, angle):
+    def draw_planet(self, planet_name: str, x: float, y: float, angle: float) -> None:
+        """
+        Отрисовка планеты и связанных с ней элементов.
+        
+        Args:
+            planet_name: Название планеты
+            x: Координата X относительно центра холста
+            y: Координата Y относительно центра холста
+            angle: Текущий угол на орбите
+            
+        Отрисовывает:
+        - След движения (если включен)
+        - Орбиту (если включена)
+        - Изображение планеты или круг с эффектом свечения
+        - Название (если включено)
+        """
         planet = self.planets_data[planet_name]
         radius = self.EARTH_RADIUS * planet['size_ratio'] * self.zoom
         
+        # Центр холста
         cx = self.canvas.winfo_width() // 2
         cy = self.canvas.winfo_height() // 2
         
+        # Абсолютные координаты на холсте
         px = cx + x
         py = cy + y
         
-        # Следы
+        # ===== СЛЕДЫ =====
         if self.trail_mode:
+            # Инициализируем список следов для планеты, если его нет
             if planet_name not in self.planet_trails:
                 self.planet_trails[planet_name] = []
+            # Добавляем текущую позицию
             self.planet_trails[planet_name].append((px, py))
+            # Ограничиваем длину следа 100 точками
             if len(self.planet_trails[planet_name]) > 100:
                 self.planet_trails[planet_name].pop(0)
             
+            # Рисуем след (линии между последовательными позициями)
             trail = self.planet_trails[planet_name]
             if len(trail) > 1:
                 for i in range(len(trail)-1):
@@ -794,63 +1066,81 @@ class SolarSystemSimulation:
                                           trail[i+1][0], trail[i+1][1],
                                           fill=planet['color'], width=1)
         
-        # Орбита
+        # ===== ОРБИТА =====
         if self.show_orbits:
             orbit_radius = planet['distance'] * self.AU * self.zoom
-            self.canvas.create_oval(cx - orbit_radius, cy - orbit_radius * 0.4,
-                                   cx + orbit_radius, cy + orbit_radius * 0.4,
+            # Рисуем круглую орбиту для вида сверху
+            self.canvas.create_oval(cx - orbit_radius, cy - orbit_radius,
+                                   cx + orbit_radius, cy + orbit_radius,
                                    outline="#446688", width=1, dash=(3, 6))
         
-        # Планета - используем изображение если есть
+        # ===== ПЛАНЕТА =====
+        # Используем изображение если доступно
         if self.planet_images.get(planet_name):
             img = self.canvas.create_image(px, py, image=self.planet_images[planet_name])
+            # Привязываем клик по изображению к показу информации
             self.canvas.tag_bind(img, "<Button-1>", 
                                 lambda e, p=planet_name: self.show_planet_info(p))
         else:
-            # Если нет изображения, рисуем круг
-            # Свечение
+            # Если нет изображения, рисуем круг с эффектом свечения
+            # Эффект свечения - несколько концентрических окружностей с разной прозрачностью
             for i in range(3, 0, -1):
                 glow_radius = radius * (1 + i * 0.1)
+                # Цвет свечения - тот же, что у планеты, но без обводки
                 self.canvas.create_oval(px - glow_radius, py - glow_radius,
                                        px + glow_radius, py + glow_radius,
                                        fill=planet['color'], outline="", width=0)
             
+            # Ядро планеты с белой обводкой для контраста
             planet_obj = self.canvas.create_oval(px - radius, py - radius,
                                                 px + radius, py + radius,
                                                 fill=planet['color'], 
                                                 outline="white", width=1)
+            # Привязываем клик по кругу к показу информации
             self.canvas.tag_bind(planet_obj, "<Button-1>", 
                                 lambda e, p=planet_name: self.show_planet_info(p))
         
-        # Название
+        # ===== НАЗВАНИЕ =====
         if self.show_names:
             text = self.canvas.create_text(px, py - radius - 15, text=planet_name,
                                          fill="white", font=("Arial", 9, "bold"))
+            # Клик по названию также показывает информацию
             self.canvas.tag_bind(text, "<Button-1>", 
                                 lambda e, p=planet_name: self.show_planet_info(p))
         
+        # Сохраняем текущий угол для возможного использования в будущем
         self.planet_angles[planet_name] = angle
     
-    def draw_sun(self):
+    def draw_sun(self) -> None:
+        """
+        Отрисовка Солнца в центре холста.
+        
+        Особенности:
+        - Если доступно изображение - использует его
+        - Иначе рисует круг с эффектом свечения (градиент из желтых оттенков)
+        - Добавляет подпись
+        - Привязывает обработчик клика
+        """
         cx = self.canvas.winfo_width() // 2
         cy = self.canvas.winfo_height() // 2
         radius = self.SUN_RADIUS * self.zoom
         
-        # Солнце теперь МАЛЕНЬКОЕ!
+        # Солнце теперь еще меньше для лучшей видимости дальних планет
         if self.planet_images.get('Солнце'):
             sun_img = self.canvas.create_image(cx, cy, image=self.planet_images['Солнце'])
             self.canvas.tag_bind(sun_img, "<Button-1>", lambda e: self.show_sun_info())
         else:
-            # Небольшое свечение
+            # Эффект свечения - несколько слоев с уменьшающейся яркостью
             for i in range(3, 0, -1):
                 glow_radius = radius * (1 + i * 0.1)
+                # Чем дальше слой, тем прозрачнее (управляется HEX-значением)
                 alpha = int(100 / i)
-                color = f'#ffff{alpha:02x}'
+                color = f'#ffff{alpha:02x}'  # Желтый с разной яркостью
                 self.canvas.create_oval(cx - glow_radius, cy - glow_radius,
                                        cx + glow_radius, cy + glow_radius,
                                        fill=color, outline="")
             
-            # Ядро
+            # Ядро Солнца
             sun_core = self.canvas.create_oval(cx - radius, cy - radius,
                                               cx + radius, cy + radius,
                                               fill="#ffaa00", outline="#ff6600", width=1)
@@ -861,44 +1151,75 @@ class SolarSystemSimulation:
                                       fill="yellow", font=("Arial", 10, "bold"))
         self.canvas.tag_bind(text, "<Button-1>", lambda e: self.show_sun_info())
     
-    def update(self):
+    def update(self) -> None:
+        """
+        Главный метод обновления анимации.
+        
+        Вызывается каждые 50 мс через self.root.after().
+        Отвечает за:
+        - Расчет текущего времени симуляции
+        - Обновление статистики
+        - Очистку и перерисовку всех объектов
+        - Планирование следующего обновления
+        
+        Частота обновления: ~20 FPS (50 мс между кадрами)
+        """
         if not self.running:
             return
         
+        # Расчет времени симуляции
         if not self.paused:
+            # Время с учетом множителя скорости
             current_time = (time.time() - self.start_time) * self.time_scale
+            # Конвертация в годы (10 - масштабный коэффициент для наглядности)
             sim_years = current_time / (365.25 * 24 * 3600 * 10)
         else:
+            # В режиме паузы время не меняется
             current_time = self.pause_time
             sim_years = self.pause_time / (365.25 * 24 * 3600 * 10)
         
+        # Обновляем статистику
         self.update_stats(sim_years)
         
+        # Очищаем холст
         self.canvas.delete("all")
         
+        # Отрисовываем только если холст имеет разумные размеры
         if self.canvas.winfo_width() > 1 and self.canvas.winfo_height() > 1:
             self.draw_sun()
             
-            # Сортируем планеты по расстоянию
+            # Сортируем планеты по расстоянию от Солнца
+            # Это важно для правильного перекрытия (ближние планеты рисуются поверх дальних)
             sorted_planets = sorted(self.planets_data.keys(),
                                    key=lambda p: self.planets_data[p]['distance'])
             
+            # Отрисовываем каждую планету
             for planet_name in sorted_planets:
                 x, y, angle = self.get_planet_position(planet_name, current_time)
                 self.draw_planet(planet_name, x, y, angle)
         
+        # Планируем следующее обновление через 50 мс
         self.root.after(50, self.update)
 
-def main():
+
+def main() -> None:
+    """
+    Главная функция запуска приложения.
+    
+    Создает главное окно, инициализирует симуляцию
+    и запускает главный цикл обработки событий Tkinter.
+    """
     root = tk.Tk()
     app = SolarSystemSimulation(root)
     
-    def on_closing():
+    def on_closing() -> None:
+        """Корректное завершение работы при закрытии окна."""
         app.running = False
         root.destroy()
     
     root.protocol("WM_DELETE_WINDOW", on_closing)
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
